@@ -157,9 +157,9 @@ cls_attr_dist = {
 }
 
 def _second_det_to_nusc_box(detection):
-    box3d = detection["box3d_lidar"].detach().cpu().numpy()
-    scores = detection["scores"].detach().cpu().numpy()
-    labels = detection["label_preds"].detach().cpu().numpy()
+    box3d = detection["box3d_lidar"]
+    scores = detection["scores"]
+    labels = detection["label_preds"]
     box3d[:, -1] = -box3d[:, -1] - np.pi / 2
     box_list = []
     for i in range(box3d.shape[0]):
