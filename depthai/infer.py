@@ -201,7 +201,7 @@ def read_boxes_from_txt(path):
         # Convert to Box objects
         box = Box(x=box_data[0], y=box_data[1], z=box_data[2],
                   l=box_data[3], h=box_data[4], w=box_data[5],
-                  theta=box_data[6], velX=box_data[7], velY=box_data[8],
+                  velX=box_data[6], velY=box_data[7], theta=box_data[8],
                   score=score, cls=klass)
         boxes.append(box)
 
@@ -218,7 +218,7 @@ def process_boxes_to_dict(boxes, token):
     klass = []
 
     for box in boxes:
-        box3d.append([box.x, box.y, box.z, box.l, box.h, box.w, box.theta, box.velX, box.velY])
+        box3d.append([box.x, box.y, box.z, box.l, box.h, box.w, box.velX, box.velY, box.theta])
         scores.append(box.score)
         klass.append(box.cls)
 
