@@ -1,7 +1,6 @@
 import numpy as np
 import onnxruntime as ort
 import argparse
-# import torch
 import itertools
 from visualization import visual
 import os
@@ -11,6 +10,7 @@ import copy
 from time import perf_counter
 from collections import defaultdict
 import pickle
+import depthai as dai
 
 # Constants
 MAX_PILLARS = 30000
@@ -72,31 +72,6 @@ class Box:
         return f"Box(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f}, l={self.l:.2f}, h={self.h:.2f}, "
         f"w={self.w:.2f}, theta={self.theta:.2f}, velX={self.velX:.2f}, velY={self.velY:.2f}, "
         f"score={self.score:.2f}, cls={self.cls:.2f}, isDrop={self.isDrop})"
-
-
-def read_bin_file(filename):
-    """
-    Reads a binary file containing a point cloud.
-
-    Args:
-    - filename (str): Path to the binary file.
-
-    Returns:
-    - np.ndarray: Numpy array containing the point cloud data (N x 5).
-    """
-    with open(filename, 'rb') as f:
-        file_content = f.read()
-
-    # Each point has 5 features (assuming x, y, z, intensity, time or reflectance)
-    feature_num = 5
-
-    # Read the file content into a numpy array of floats
-    point_cloud = np.frombuffer(file_content, dtype=np.float32).reshape(-1, feature_num)
-
-    point_num = point_cloud.shape[0]
-    print(f"[INFO] pointNum: {point_num}")
-
-    return point_cloud
 
 
 def rotate_around_center(box, corner, cos_val, sin_val):
@@ -321,6 +296,10 @@ def build_data_pipeline(args):
     if args.simple_data:
         with open(args.data, 'rb') as f:
             data = pickle.load(f)
+
+        if args.max_elems:
+            data = data[:args.max_elems]
+
         return len(data), data
     else:
         from det3d.torchie.parallel import collate_kitti
@@ -338,11 +317,13 @@ def build_data_pipeline(args):
             pin_memory=False,
         )
 
-        return len(dataset), nuscenes_iterator(dataset, data_loader)
+        return len(dataset), nuscenes_iterator(dataset, data_loader, args.max_elems)
 
 
-def nuscenes_iterator(dataset, data_loader):
+def nuscenes_iterator(dataset, data_loader, max_elems):
     for i, data_batch in enumerate(data_loader):
+        if max_elems and i >= max_elems:
+            break
         token = data_batch['metadata'][0]['token']
         points = data_batch['points'][:, 1:].cpu().numpy()
         info = dataset._nusc_infos[i]
@@ -532,11 +513,18 @@ class InferencePipeline:
 
         return result, times
 
+    @classmethod
+    def build(cls, args):
+        if 'onnx' in args.model:
+            return ONNXInferencePipeline(args)
+        else:
+            return RVC4InferencePipeline(args)
+
 
 class ONNXInferencePipeline(InferencePipeline):
-    def __init__(self, model_path):
+    def __init__(self, args):
         # Load the ONNX model using onnxruntime
-        self.session = ort.InferenceSession(model_path)
+        self.session = ort.InferenceSession(args.model)
 
     def run_inference(self, features, indices):
         # Run inference with the ONNX model
@@ -553,20 +541,56 @@ class ONNXInferencePipeline(InferencePipeline):
         return raw_output
 
 
+class RVC4InferencePipeline(InferencePipeline):
+    def __init__(self, args):
+        IP = args.camera_ip
+        info = dai.DeviceInfo(IP)
+        info.protocol = dai.X_LINK_TCP_IP
+        info.state = dai.X_LINK_GATE
+        info.platform = dai.X_LINK_RVC4
+        device = dai.Device(info)
+        pipeline = dai.Pipeline(device)
+
+        network = pipeline.create(dai.node.NeuralNetwork)
+        network.setModelPath(args.model)
+
+        self.in_queue = network.input.createInputQueue()
+        # self.in_queue_feats = network.inputs['input.1'].createInputQueue()
+        # self.in_queue_indices = network.inputs['indices_input'].createInputQueue()
+
+        self.out_queue = network.out.createOutputQueue()
+
+        self.pipeline = pipeline
+        self.pipeline.start()
+
+    def run_inference(self, features, indices):
+        # Send the features and indices to the input queues
+        input_data = dai.NNData()
+        features = features.reshape(1, 10, 30000, 20)
+        input_data.addTensor("input.1", features)
+        indices = indices.reshape(1, 30000, 2)
+        input_data.addTensor("indices_input", indices)
+        self.in_queue.send(input_data)
+
+        raw_output = self.out_queue.get()
+        print(raw_output)
+
+    def __del__(self):
+        self.pipeline.stop()
+        # self.pipeline.close()
+
+
 def run_inference(args):
     # Initialize the inference pipeline
-    inference_pipeline = ONNXInferencePipeline(args.model)
+    inference_pipeline = InferencePipeline.build(args)
 
     # Initialize the data pipeline
     n_elems, iterable = build_data_pipeline(args)
 
-    limit = n_elems if args.max_elems is None else min(args.max_elems, n_elems)
     detections = {}
     avg_times = defaultdict(float)
 
-    for i, (token, points, info) in tqdm(enumerate(iterable), desc="Running inference", total=limit):
-        if args.max_elems is not None and i >= args.max_elems:
-            break
+    for i, (token, points, info) in tqdm(enumerate(iterable), desc="Running inference", total=n_elems):
         output, times = inference_pipeline.infer_from_point_cloud(points)
 
         detections[token] = output
@@ -624,7 +648,7 @@ def run_evaluation(args, output_dict):
             {token: output}
         )
 
-    if not args.simple_data:
+    if not args.simple_data and not args.max_elems:
         from det3d.torchie.trainer.utils import all_gather
 
         all_predictions = all_gather(detections)
@@ -680,13 +704,15 @@ def main():
 
     # Primary args
     parser.add_argument("-m", "--model", help="Path to the model")
+    parser.add_argument("-ip", "--camera_ip", help="IP address of the RVC4 camera (peripheral)", default="127.0.0.1")
     parser.add_argument("-d", "--data", help="Path to the nuScenes data directory (or .pkl file in case of simple data pipeline)")
     parser.add_argument("-r", "--result_dir", help="Path to the result directory")
     parser.add_argument("-o", "--output_dir", help="Path to the output directory")
     # Secondary args
     parser.add_argument("--simple_data", action="store_true", help="Use simple data pipeline (binary files). Turns off "
                                                                    "evaluation (visualization is still possible).")
-    parser.add_argument("--max_elems", type=int, help="Maximum number of elements to process. Turns off evaluation (visualization is still possible).")
+    parser.add_argument("--max_elems", type=int, help="Maximum number of elements to process. "
+                                                      "Turns off evaluation (visualization is still possible).", default=None)
     args = parser.parse_args()
 
     # Argument verification tree
