@@ -1,5 +1,19 @@
-# CenterPoint-PonintPillars Pytroch model convert to ONNX and TensorRT
-Welcome to CenterPoint! This project is fork from [tianweiy/CenterPoint](https://github.com/tianweiy/CenterPoint). I implement some code to export CenterPoint-PonintPillars ONNX model and deploy the onnx model using TensorRT.
+# CenterPoint/PointPillars export to ONNX, inference on ONNX/RVC4 (DepthAI)
+Welcome to CenterPoint! This project is a fork from [CarkusL/CenterPoint](https://github.com/CarkusL/CenterPoint). I implemented an ONNX/RVC4 inference pipeline for it.
+
+Simplest setup (ONNX Inference):
+
+```
+git checkout minimal
+<create venv>
+pip install -r requirements-simple.txt
+python depthai/infer.py --model onnx_model/pointpillars.onnx --data nuscenes_mini_simple.pkl --output_dir INFER_outputs --result_dir INFER_results --simple_data
+python depthai/images_to_gif.py -i INFER_outputs/
+```
+
+RVC4/detailed instructions TBD!
+
+# Original README
 
 Center-based 3D Object Detection and Tracking
 
@@ -166,6 +180,7 @@ Compare the [TensorRT result](./demo/trt_demo/file00.png) with [Pytorch result](
 |  TensoRT  | Pytroch  |
 |  :----:  | :----:  |
 | ![avatar](./demo/trt_demo/file00.png)  | ![avatar](./demo/torch_demo/file00.png) |
+
 
 #### 3D detection on nuScenes Mini dataset
 TensorRT postprocess use aligned NMS on Bev, so there are some precision loss.
