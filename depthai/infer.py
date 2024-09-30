@@ -554,9 +554,10 @@ class RVC4InferencePipeline(InferencePipeline):
         network = pipeline.create(dai.node.NeuralNetwork)
         network.setModelPath(args.model)
 
-        self.in_queue = network.input.createInputQueue()
-        # self.in_queue_feats = network.inputs['input.1'].createInputQueue()
-        # self.in_queue_indices = network.inputs['indices_input'].createInputQueue()
+        self.feat_in_queues = [
+            network.inputs[f'feats_{i}'].createInputQueue() for i in range(10)
+        ]
+        self.index_in_queue = network.inputs["indices_input"].createInputQueue()
 
         self.out_queue = network.out.createOutputQueue()
 
@@ -565,12 +566,18 @@ class RVC4InferencePipeline(InferencePipeline):
 
     def run_inference(self, features, indices):
         # Send the features and indices to the input queues
-        input_data = dai.NNData()
         features = features.reshape(1, 10, 30000, 20)
-        input_data.addTensor("input.1", features)
         indices = indices.reshape(1, 30000, 2)
-        input_data.addTensor("indices_input", indices)
-        self.in_queue.send(input_data)
+
+        BLOCK_SIZE = 3000
+        for i in range(10):
+            feat_input = dai.NNData()
+            feat_input.addTensor(f'feats_{i}', features[:, :, BLOCK_SIZE * i:BLOCK_SIZE * (i + 1), :])
+            self.feat_in_queues[i].send(feat_input)
+
+        index_input = dai.NNData()
+        index_input.addTensor("indices_input", indices)
+        self.index_in_queue.send(index_input)
 
         raw_output = self.out_queue.get()
         print(raw_output)
