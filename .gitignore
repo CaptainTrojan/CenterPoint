@@ -12,3 +12,10 @@ venv/
 *.pkl
 *.zip
 .vscode/
+NUSCENES/*
+shared_with_container/
+INFER*
+.conda*
+*.png
+RESULTS/*
+.cache/*
