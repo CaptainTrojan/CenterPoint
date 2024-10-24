@@ -19,3 +19,6 @@ INFER*
 *.png
 RESULTS/*
 .cache/*
+onnx_*
+output/*
+result/*
