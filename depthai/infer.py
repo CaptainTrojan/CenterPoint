@@ -344,6 +344,10 @@ def format_detections_for_evaluation(args, detections):
 
 
 class InferencePipeline:
+    def __init__(self, args):
+        self.intensity = args.intensity
+        self.time_lag = args.time_lag
+
     def run_inference(self, features, indices):
         """
         Run inference using the model.
@@ -429,6 +433,12 @@ class InferencePipeline:
             if n_points < MAX_POINT_IN_PILLARS:
                 # Store features in the appropriate pillar
                 features[:5, pillar_id, n_points] = valid_points[idx]
+
+                # feature[8*MAX_PILLARS*MAX_PIONT_IN_PILLARS + pillarCountIdx*MAX_PIONT_IN_PILLARS + pointNumInPillar] = x - (xIdx*X_STEP + X_MIN + X_STEP/2);
+                # feature[9*MAX_PILLARS*MAX_PIONT_IN_PILLARS + pillarCountIdx*MAX_PIONT_IN_PILLARS + pointNumInPillar] = y - (yIdx*Y_STEP + Y_MIN + Y_STEP/2);
+                features[8, pillar_id, n_points] = x_valid[idx] - (x_idx[idx] * X_STEP + X_MIN + X_STEP / 2)
+                features[9, pillar_id, n_points] = y_valid[idx] - (y_idx[idx] * Y_STEP + Y_MIN + Y_STEP / 2)
+
                 point_count[pillar_id] += 1  # Increment the point count for this pillar
 
         # Compute mean features for each pillar and normalize
@@ -441,6 +451,12 @@ class InferencePipeline:
 
                 # Normalize features
                 features[5:8, pillar_id, :n_points] = pillar_points[:3] - pillar_mean[:3][:, None]
+
+        # Overwrite lidar-specific features
+        if self.intensity is not None:
+            features[3] = self.intensity
+        if self.time_lag is not None:
+            features[4] = self.time_lag
 
         return features, indices
 
@@ -525,6 +541,8 @@ class ONNXInferencePipeline(InferencePipeline):
     def __init__(self, args):
         # Load the ONNX model using onnxruntime
         self.session = ort.InferenceSession(args.model)
+        self.intensity = args.intensity
+        self.time_lag = args.time_lag
 
     def run_inference(self, features, indices):
         # Run inference with the ONNX model
@@ -670,11 +688,12 @@ def run_evaluation(args, output_dict):
             for k, v in result_dict["results"].items():
                 print(f"Evaluation {k}: {v}")
 
-    draw_num = len(points_list)
-    image_dir = os.path.join(args.output_dir, "images")
-    os.makedirs(image_dir, exist_ok=False)
-    for i in tqdm(range(draw_num), desc="Visualizing results"):
-        visual(points_list[i], gt_annos[i], detections_for_draw[i], i, save_path=image_dir)
+    if not args.no_visualization:
+        draw_num = len(points_list)
+        image_dir = os.path.join(args.output_dir, "images")
+        os.makedirs(image_dir, exist_ok=False)
+        for i in tqdm(range(draw_num), desc="Visualizing results"):
+            visual(points_list[i], gt_annos[i], detections_for_draw[i], i, save_path=image_dir)
 
 
 def export_detections(args, detections):
@@ -720,6 +739,9 @@ def main():
                                                                    "evaluation (visualization is still possible).")
     parser.add_argument("--max_elems", type=int, help="Maximum number of elements to process. "
                                                       "Turns off evaluation (visualization is still possible).", default=None)
+    parser.add_argument("--intensity", type=float, help="Intensity value to use for the input points", default=None)
+    parser.add_argument("--time_lag", type=float, help="Time lag value to use for the input points", default=None)
+    parser.add_argument("--no_visualization", action="store_true", help="Do not visualize the results")
     args = parser.parse_args()
 
     # Argument verification tree

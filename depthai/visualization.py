@@ -237,11 +237,13 @@ class Box:
 def visual(points, gt_anno, det, i, eval_range=35, conf_th=0.5, save_path="demo"):
     _, ax = plt.subplots(1, 1, figsize=(9, 9), dpi=200)
     points = remove_close(points, radius=3)
-    points = view_points(points[:3, :], np.eye(4), normalize=False)
+    points_2d = view_points(points[:3, :], np.eye(4), normalize=False)
 
-    dists = np.sqrt(np.sum(points[:2, :] ** 2, axis=0))
+    dists = np.sqrt(np.sum(points_2d[:2, :] ** 2, axis=0))
     colors = np.minimum(1, dists / eval_range)
-    ax.scatter(points[0, :], points[1, :], c=colors, s=0.2)
+    # Color instead by the features index 3, which is the "instance"
+    # colors = points[3, :]
+    ax.scatter(points_2d[0, :], points_2d[1, :], c=colors, s=0.2)
 
     boxes_gt = _second_det_to_nusc_box(gt_anno)
     boxes_est = _second_det_to_nusc_box(det)
